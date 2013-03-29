@@ -7,30 +7,26 @@ end
 
 class Game
 
-  # makes instance variable public by adding a function that accesses
-  # the underlying value with the same name as the underlying value.
-  # `attr_reader` and not `attr_accessor` because users of class never need to
-  # modify `is_x_move?` variable
-  def xs_move?
-    return @xs_move
-  end
-    
+  @@winning_index_sets = [[0, 3, 6],  # verticals
+                          [1, 4, 7],
+                          [2, 5, 8],
+                          [0, 1, 2],  # horizontals
+                          [3, 4, 5],
+                          [6, 7, 8],
+                          [0, 4, 8],  # diagonals
+                          [2, 4, 6]]
   
-  def initialize
-    @board = 9.times.map {nil}
-    @winning_index_sets = [[0, 3, 6],  # verticals
-                           [1, 4, 7],
-                           [2, 5, 8],
-                           [0, 1, 2],  # horizontals
-                           [3, 4, 5],
-                           [6, 7, 8],
-                           [0, 4, 8],  # diagonals
-                           [2, 4, 6]]
-    @xs_move = true
+  def initialize(board=nil, xs_move=true)
+    @board = board || 9.times.map {nil}
+    @xs_move = xs_move
+  end
+
+  def clone
+    return Game.new(Array.new(@board), @xs_move)
   end
 
   def check_for_win
-    @winning_index_sets.each do |index_set|
+    @@winning_index_sets.each do |index_set|
       board_values = index_set.map {|index| @board[index]}
       return "X" if board_values == ["X", "X", "X"]
       return "O" if board_values == ["O", "O", "O"]
@@ -46,14 +42,69 @@ class Game
     ((0..8).include? cell_index) && @board[cell_index].nil?
   end
 
+  def xs_move?
+    return @xs_move
+  end
+
   def make_move(cell_index)
     raise IllegalMoveError unless move_legal?(cell_index)
     @board[cell_index] = xs_move? ? "X" : "O"
     @xs_move = !@xs_move
+    return self
   end
 
   def legal_move_remains?
     @board.include? nil
+  end
+
+  def to_s
+    return @board.map {|item| item.nil? ? "n" : item}.join()
+  end
+end
+
+
+class PositionAnalysis
+  attr_reader :game, :winner, :winning_move
+  def initialize(game, winner, move)
+    @game = game
+    @winner = winner
+    @winning_move = move
+  end
+end
+
+
+class AI
+
+  def initialize(game=nil)
+    @position_to_analysis_map = {}
+    perform_analysis_for_game(game || Game.new)
+  end
+
+  def perform_analysis_for_game(game)
+    current_analysis = @position_to_analysis_map[game.to_s]
+    return current_analysis unless current_analysis.nil?
+    winner = game.check_for_win
+    return PositionAnalysis.new(game, winner, nil) unless winner.nil?
+    return PositionAnalysis.new(game, nil, nil) unless game.legal_move_remains?
+    child_analyses = (0..8).select {|index| game.move_legal?(index)}.map {|index|
+      [index, perform_analysis_for_game(game.clone.make_move(index))]
+    }
+    current_player = game.xs_move? ? "X" : "O"
+    index_analysis_pair = child_analyses.find {|i, analysis| analysis.winner == current_player}
+    if index_analysis_pair.nil?
+      index_analysis_pair = child_analyses.find {|i, analysis| analysis.winner.nil?}
+    end
+    if index_analysis_pair.nil?
+      index_analysis_pair = child_analyses[0]
+    end
+    index, analysis = index_analysis_pair
+    analysis = PositionAnalysis.new(game, analysis.winner, index)
+    @position_to_analysis_map[game.to_s] = analysis
+    return analysis
+  end
+
+  def make_move_for_game(game)
+    return @position_to_analysis_map[game.to_s].winning_move
   end
 end
 
@@ -85,26 +136,25 @@ class UserInterface
     end
   end
 
-  # def display_board
-  #   puts "#{value_to_print_at_cell_index 0} | #{value_to_print_at_cell_index 1} | #{value_to_print_at_cell_index 2}"
-  #   puts @bar
-  #   puts "#{value_to_print_at_cell_index 3} | #{value_to_print_at_cell_index 4} | #{value_to_print_at_cell_index 5}"
-  #   puts @bar
-  #   puts "#{value_to_print_at_cell_index 6} | #{value_to_print_at_cell_index 7} | #{value_to_print_at_cell_index 8}"
-  # end
-
   def play
-    # if `@game.legal_move_remains?` then continue displaying board and prompting user
+    # if `@game.legal_move_remains?` then continue displaying board
+    # and prompting user
+    ai = AI.new
     while @game.legal_move_remains?
       puts board_string
       puts (@game.xs_move? ? "X" : "O") + "'s Move"
-      begin
-        @game.make_move(print_message_and_get_index("Enter position number:") - 1) #minus 1 for index
-      rescue IllegalMoveError
-        puts "That move was not valid"
+      unless @game.xs_move?
+        begin
+          @game.make_move(print_message_and_get_index("Enter position number:") - 1) #minus 1 for index
+        rescue IllegalMoveError
+          puts "That move was not valid"
+        end
+      else
+        @game.make_move(ai.make_move_for_game(@game))
       end
       game_victor = @game.check_for_win
       if !game_victor.nil?
+        puts board_string
         puts "#{game_victor} WINS THE GAME!"
         return
       end
